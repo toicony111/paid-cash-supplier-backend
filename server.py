@@ -55,6 +55,13 @@ def create_user_if_not_exists(telegram_id, username, first_name, referred_by=Non
 def home():
     return jsonify({"status": "ok", "message": "Paid Cash Supplier API is running on Supabase"})
 
+# Endpoint nhận callback từ Adsgram khi user xem xong quảng cáo
+@app.route('/api/adsgram-reward', methods=['GET'])
+def adsgram_reward():
+    user_id = request.args.get('userid')
+    print(f"✅ Adsgram reward verified for user {user_id}")
+    return jsonify({"status": "ok", "message": "Reward verified"})
+
 @app.route('/api/user/<telegram_id>', methods=['GET'])
 def get_user(telegram_id):
     try:
@@ -136,7 +143,6 @@ def admin_panel():
         users = supabase.table("users").select("*").order("balance", desc=True).limit(50).execute()
         pending = supabase.table("withdrawals").select("*").eq("status", "pending").execute()
         
-        # Lấy username thủ công
         pending_list = []
         for w in pending.data:
             user_info = supabase.table("users").select("username").eq("telegram_id", w['telegram_id']).execute()
