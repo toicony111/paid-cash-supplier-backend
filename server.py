@@ -7,6 +7,20 @@ import time
 import os
 
 app = Flask(__name__)
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "ok",
+        "message": "Paid Cash Supplier API is running",
+        "endpoints": {
+            "admin": "/admin",
+            "create_user": "/api/user/create",
+            "get_user": "/api/user/<telegram_id>",
+            "update_balance": "/api/user/update-balance",
+            "withdraw": "/api/withdraw",
+            "withdrawals": "/api/withdrawals/<telegram_id>"
+        }
+    })
 CORS(app)
 
 BOT_TOKEN = "YOUR_BOT_TOKEN"  # Token bot Telegram của bạn
