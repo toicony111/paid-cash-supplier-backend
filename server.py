@@ -1,16 +1,18 @@
 import os
 import uuid
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Khởi tạo Supabase client
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") # Dùng service_role cho server
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ========== HELPERS ==========
@@ -32,7 +34,6 @@ def create_user_if_not_exists(telegram_id, username, first_name, referred_by=Non
         }
         supabase.table("users").insert(new_user).execute()
         
-        # Thưởng cho người giới thiệu
         if referred_by:
             referrer = supabase.table("users").select("*").eq("ref_code", referred_by).execute()
             if referrer.data:
@@ -133,13 +134,25 @@ def get_withdrawals(telegram_id):
 def admin_panel():
     try:
         users = supabase.table("users").select("*").order("balance", desc=True).limit(50).execute()
-        pending = supabase.table("withdrawals").select("*, users(username)").eq("status", "pending").execute()
+        pending = supabase.table("withdrawals").select("*").eq("status", "pending").execute()
+        
+        # Lấy username thủ công
+        pending_list = []
+        for w in pending.data:
+            user_info = supabase.table("users").select("username").eq("telegram_id", w['telegram_id']).execute()
+            username = user_info.data[0]['username'] if user_info.data else 'unknown'
+            pending_list.append({**w, 'username': username})
+        
         stats = {
             'total_users': len(users.data),
             'pending_count': len(pending.data)
         }
-        # Tạo HTML tương tự như trước...
-        return jsonify({"users": len(users.data), "pending": len(pending.data), "stats": stats})
+        
+        return jsonify({
+            "users": len(users.data),
+            "pending": pending_list,
+            "stats": stats
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
