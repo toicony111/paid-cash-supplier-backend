@@ -161,6 +161,24 @@ def admin_panel():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
+@app.route('/api/user/<telegram_id>/referrals', methods=['GET'])
+def get_referrals(telegram_id):
+    """Lấy danh sách người được giới thiệu"""
+    try:
+        # Lấy ref_code của user hiện tại
+        user = supabase.table("users").select("ref_code").eq("telegram_id", telegram_id).execute()
+        if not user.data:
+            return jsonify([])
+        
+        ref_code = user.data[0]['ref_code']
+        
+        # Lấy danh sách người dùng có referred_by = ref_code
+        referrals = supabase.table("users").select(
+            "first_name, total_earned, created_at"
+        ).eq("referred_by", ref_code).order("created_at", desc=True).execute()
+        
+        return jsonify(referrals.data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
