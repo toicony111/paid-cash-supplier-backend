@@ -78,9 +78,24 @@ def home():
 
 @app.route('/api/adsgram-reward', methods=['GET'])
 def adsgram_reward():
+    """Server-to-server callback từ Adsgram xác nhận user đã xem ads"""
     user_id = request.args.get('userid')
-    print(f"✅ Adsgram reward verified for user {user_id}")
-    return jsonify({"status": "ok", "message": "Reward verified"})
+    reward_amount = request.args.get('reward', 0)
+    
+    print(f"✅ Adsgram SERVER verified: user={user_id}, reward={reward_amount}")
+    
+    # Lưu xác nhận từ Adsgram server vào database
+    try:
+        supabase.table("ad_verifications").insert({
+            "telegram_id": user_id,
+            "verified_at": "now()",
+            "verified_by": "adsgram_server",
+            "reward": int(reward_amount) if reward_amount else 0
+        }).execute()
+    except Exception as e:
+        print(f"Error saving verification: {e}")
+    
+    return jsonify({"status": "ok", "message": "Reward verified by server"})
 
 @app.route('/api/user/<telegram_id>', methods=['GET'])
 def get_user(telegram_id):
@@ -129,6 +144,14 @@ def update_balance():
         }).eq("telegram_id", telegram_id).execute()
         
         supabase.table("ad_claims").insert({"telegram_id": telegram_id, "reward": reward}).execute()
+        
+        # Lưu xác nhận từ frontend
+        supabase.table("ad_verifications").insert({
+            "telegram_id": telegram_id,
+            "verified_at": "now()",
+            "verified_by": "frontend",
+            "reward": reward
+        }).execute()
         
         # Thưởng 10% cho người giới thiệu
         if user.get('referred_by'):
@@ -215,6 +238,15 @@ def get_referrals(telegram_id):
         ).eq("referred_by", ref_code).order("created_at", desc=True).execute()
         
         return jsonify(referrals.data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/user/<telegram_id>/ad-verifications', methods=['GET'])
+def get_ad_verifications(telegram_id):
+    """Kiểm tra lịch sử xác nhận ads của user"""
+    try:
+        verifications = supabase.table("ad_verifications").select("*").eq("telegram_id", telegram_id).order("verified_at", desc=True).limit(50).execute()
+        return jsonify(verifications.data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
