@@ -1,5 +1,6 @@
 import os
 import uuid
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from supabase import create_client, Client
@@ -10,13 +11,32 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Khởi tạo Supabase client
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# ========== IP HELPERS ==========
+def get_client_ip():
+    """Lấy IP thật của user"""
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if ip and ',' in ip:
+        ip = ip.split(',')[0].strip()
+    return ip or 'unknown'
+
+def get_country_from_ip(ip):
+    """Lấy quốc gia từ IP"""
+    if ip in ('127.0.0.1', 'localhost', '::1', 'unknown'):
+        return 'Local'
+    try:
+        resp = requests.get(f'http://ip-api.com/json/{ip}?fields=country', timeout=3)
+        if resp.status_code == 200:
+            return resp.json().get('country', 'unknown')
+    except:
+        pass
+    return 'unknown'
+
 # ========== HELPERS ==========
-def create_user_if_not_exists(telegram_id, username, first_name, referred_by=None):
+def create_user_if_not_exists(telegram_id, username, first_name, referred_by=None, country='unknown', register_ip='unknown'):
     """Tìm user, nếu chưa có thì tạo mới"""
     try:
         user = supabase.table("users").select("*").eq("telegram_id", telegram_id).execute()
@@ -30,11 +50,13 @@ def create_user_if_not_exists(telegram_id, username, first_name, referred_by=Non
             "first_name": first_name,
             "ref_code": own_ref,
             "referred_by": referred_by,
-            "balance": 0
+            "balance": 0,
+            "country": country,
+            "register_ip": register_ip,
+            "last_ad_ip": register_ip
         }
         supabase.table("users").insert(new_user).execute()
         
-        # Chỉ tăng ref_count, KHÔNG thưởng 5000 coin
         if referred_by:
             referrer = supabase.table("users").select("*").eq("ref_code", referred_by).execute()
             if referrer.data:
@@ -54,7 +76,6 @@ def create_user_if_not_exists(telegram_id, username, first_name, referred_by=Non
 def home():
     return jsonify({"status": "ok", "message": "Paid Cash Supplier API is running on Supabase"})
 
-# Endpoint nhận callback từ Adsgram khi user xem xong quảng cáo
 @app.route('/api/adsgram-reward', methods=['GET'])
 def adsgram_reward():
     user_id = request.args.get('userid')
@@ -74,11 +95,16 @@ def get_user(telegram_id):
 @app.route('/api/user/create', methods=['POST'])
 def create_user():
     data = request.json
+    ip = get_client_ip()
+    country = get_country_from_ip(ip)
+    
     user = create_user_if_not_exists(
         str(data.get('telegram_id')),
         data.get('username', ''),
         data.get('first_name', 'Unknown'),
-        data.get('referred_by')
+        data.get('referred_by'),
+        country,
+        ip
     )
     if user:
         return jsonify({'message': 'User ready', 'user': user})
@@ -89,6 +115,7 @@ def update_balance():
     data = request.json
     telegram_id = str(data.get('telegram_id'))
     reward = int(data.get('reward', 0))
+    ip = get_client_ip()
     
     try:
         user = supabase.table("users").select("*").eq("telegram_id", telegram_id).execute().data[0]
@@ -96,7 +123,9 @@ def update_balance():
             "balance": user['balance'] + reward,
             "total_earned": user['total_earned'] + reward,
             "ads_watched": user['ads_watched'] + 1,
-            "last_claim": "now()"
+            "last_claim": "now()",
+            "last_ad_ip": ip,
+            "last_ad_time": "now()"
         }).eq("telegram_id", telegram_id).execute()
         
         supabase.table("ad_claims").insert({"telegram_id": telegram_id, "reward": reward}).execute()
@@ -106,7 +135,7 @@ def update_balance():
             referrer = supabase.table("users").select("*").eq("ref_code", user['referred_by']).execute()
             if referrer.data:
                 ref_user = referrer.data[0]
-                bonus = int(reward * 0.1)  # 10%
+                bonus = int(reward * 0.1)
                 if bonus > 0:
                     supabase.table("users").update({
                         "balance": ref_user['balance'] + bonus,
@@ -175,14 +204,12 @@ def admin_panel():
 
 @app.route('/api/user/<telegram_id>/referrals', methods=['GET'])
 def get_referrals(telegram_id):
-    """Lấy danh sách người được giới thiệu"""
     try:
         user = supabase.table("users").select("ref_code").eq("telegram_id", telegram_id).execute()
         if not user.data:
             return jsonify([])
         
         ref_code = user.data[0]['ref_code']
-        
         referrals = supabase.table("users").select(
             "first_name, total_earned, created_at"
         ).eq("referred_by", ref_code).order("created_at", desc=True).execute()
