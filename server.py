@@ -34,13 +34,12 @@ def create_user_if_not_exists(telegram_id, username, first_name, referred_by=Non
         }
         supabase.table("users").insert(new_user).execute()
         
+        # Chỉ tăng ref_count, KHÔNG thưởng 5000 coin
         if referred_by:
             referrer = supabase.table("users").select("*").eq("ref_code", referred_by).execute()
             if referrer.data:
                 ref_user = referrer.data[0]
                 supabase.table("users").update({
-                    "balance": ref_user['balance'] + 5000,
-                    "ref_earnings": ref_user['ref_earnings'] + 5000,
                     "ref_count": ref_user['ref_count'] + 1
                 }).eq("ref_code", referred_by).execute()
         
@@ -102,6 +101,18 @@ def update_balance():
         
         supabase.table("ad_claims").insert({"telegram_id": telegram_id, "reward": reward}).execute()
         
+        # Thưởng 10% cho người giới thiệu
+        if user.get('referred_by'):
+            referrer = supabase.table("users").select("*").eq("ref_code", user['referred_by']).execute()
+            if referrer.data:
+                ref_user = referrer.data[0]
+                bonus = int(reward * 0.1)  # 10%
+                if bonus > 0:
+                    supabase.table("users").update({
+                        "balance": ref_user['balance'] + bonus,
+                        "ref_earnings": ref_user['ref_earnings'] + bonus
+                    }).eq("ref_code", user['referred_by']).execute()
+        
         return jsonify({'balance': user['balance'] + reward, 'reward': reward})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -161,18 +172,17 @@ def admin_panel():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 @app.route('/api/user/<telegram_id>/referrals', methods=['GET'])
 def get_referrals(telegram_id):
     """Lấy danh sách người được giới thiệu"""
     try:
-        # Lấy ref_code của user hiện tại
         user = supabase.table("users").select("ref_code").eq("telegram_id", telegram_id).execute()
         if not user.data:
             return jsonify([])
         
         ref_code = user.data[0]['ref_code']
         
-        # Lấy danh sách người dùng có referred_by = ref_code
         referrals = supabase.table("users").select(
             "first_name, total_earned, created_at"
         ).eq("referred_by", ref_code).order("created_at", desc=True).execute()
@@ -180,5 +190,6 @@ def get_referrals(telegram_id):
         return jsonify(referrals.data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
